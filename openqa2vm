@@ -1,0 +1,376 @@
+#!/bin/bash
+# openqa2vm
+# Copyright (C) 2019 Petr Cervinka
+#
+#This program is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+[[ "$TRACE" ]] && set -x
+
+# Use configuration file 
+CFG_FILE=${CFG_FILE:=/etc/openqa2vm/default}
+# shellcheck source=/etc/openqa2vm/default
+[ -f "$CFG_FILE" ] && source "$CFG_FILE"
+
+# Default  variables
+FROM=${FROM:=openqa.opensuse.org}
+SYS_TMP=${SYS_TMP:=/var/tmp}
+IMAGE_VAR=${IMAGE_VAR:=PUBLISH_HDD_1}
+
+# VM default settings
+LIBVIRT_IMAGE_DIR=${LIBVIRT_IMAGE_DIR:=/var/lib/libvirt/images}
+LIBVIRT_HOST=${LIBVIRT_HOST}
+LIBVIRT_VOLUME_POOL=${LIBVIRT_VOLUME_POOL:=default}
+NODES=${NODES:=1}
+MEMORY=${MEMORY:=1024}
+VCPU=${VCPU:=1}
+BRIDGE=${BRIDGE}
+MACVTAP=${MACVTAP}
+
+function usage {
+	cat <<EOF
+Usage: $(basename "$0") [OPTIONS] JOBID
+
+Options:
+  -f HOST     get job from specified host (default openqa.opensuse.org) 
+  -b BRIDGE   enable bridge networking on BRIDGE
+  -s JOBID    show information about job
+  -d JOBID    download image for the job
+  -p JOBID    prepare image for virtual machine
+  -i JOBID    install image to libvirt directory
+  -r JOBID    run virtual machine
+  -x JOBID    destroy(stop and delete) virtual machine
+  -c JOBID    openqa2vm cleanup 
+              stop vm, delete vm, delete images, delete tmp files
+  -h          display help
+
+Examples:
+openqa2vm  -s 895435 # display job info from o.o.o
+openqa2vm  -s 895435 # dowload image  from o.o.o
+openqa2vm  -p 895435 # prepare image  from o.o.o
+openqa2vm  -r 895435 # download, prepare amd run vm
+openqa2vm  -b br0 -r 895435 # download, prepare amd run vm with network attached to bridge br0
+
+openqa2vm  -s 2758750 # display job info from o.s.d
+
+Recommended workflow:
+openqa2vm  -s 895435 # show info
+openqa2vm  -r 895435 # run vm
+openqa2vm  -c 895435 # clean all
+
+Notes:
+root privileges are needed
+terrafrom, terraform-provider-libvirt and guestfs-tools must be installed
+EOF
+	exit 2
+}
+
+yes_no () {
+  [ $? -ne 0 ]  ||  { echo YES; return; }
+  echo NO
+}
+
+
+# Check job id is valid integer
+is_job_id () {
+  [[ $1 =~ ^[0-9]+$ ]] || { echo "Invalid job id format: $JOB_ID is not valid integer number" >&2 && exit 1; }
+}
+# Verify ip address format
+is_ip () {
+  [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Verify that hostname is valid
+is_host () {
+  host "$1" >  /dev/null 2>&1 
+}
+
+# Check if version is Tumbleweed
+is_tumbleweed () {
+  [ "$(get_var "VERSION")" = "Tumbleweed" ]
+}
+# Return content of variable from vars.json
+get_var () {
+  grep "\"$1\"" "$VARS" | awk  '{print $3}'| sed -e 's/"//g' -e 's/,//g';
+}
+
+downloaded_msg () {
+  echo "Image $IMAGE from $FROM is downloaded in $TMP_DIR"
+}
+# Download qcow2 image from server
+download_image () {
+  [ -f "$STATUS_DIR/downloaded" ] && { downloaded_msg; return;}
+  # Download openQA image, set downloaded status
+  wget -P "$TMP_DIR" -c "$FROM/tests/$JOB_ID/asset/hdd/$IMAGE" || { echo "Error during download of $IMAGE from $FROM" >&2 && exit 1; }
+  downloaded_msg
+  # Set downloaded status
+  touch "$STATUS_DIR/downloaded"
+}
+
+installed_msg_remote () {
+  echo "Image $IMAGE is remotelly installed in $LIBVIRT_IMAGE_DIR/$IMAGE on $LIBVIRT_HOST"
+}
+
+installed_msg_local () {
+  echo "Image $IMAGE is installed in $LIBVIRT_IMAGE_DIR/$IMAGE"
+}
+
+install_image () {
+  if [ -n "$LIBVIRT_HOST" ]; then
+    [ -f "$STATUS_DIR/remote/$LIBVIRT_HOST" ] && { installed_msg_remote; return; }
+    scp "$TMP_DIR/$IMAGE" "root@$LIBVIRT_HOST:$LIBVIRT_IMAGE_DIR/$IMAGE" || { echo "Error during copy of $IMAGE to host $LIBVIRT_HOST" >&2 && exit 1; }
+    installed_msg_remote
+    # set status
+    touch "$STATUS_DIR/remote/$LIBVIRT_HOST"
+  else
+    [ -f "$STATUS_DIR/local" ] && { installed_msg_local; return; }
+    cp "$TMP_DIR/$IMAGE" "$LIBVIRT_IMAGE_DIR/$IMAGE"
+    installed_msg_local
+    touch "$STATUS_DIR/local"
+  fi
+}
+
+prepared_msg () {
+  echo "Image $IMAGE from $FROM in $TMP_DIR is prepared for virtual machine"
+}
+# Prepare qcow2 image for virtual machine
+prepare_image () {
+  [ -f "/usr/bin/guestfish" ] || { echo "Missing guestfish. Please install guestfs-tools." >&2 && exit 1; }
+  [ -f "$STATUS_DIR/prepared" ] && { prepared_msg; return; }
+  download_image
+  # Fix network configuration in Tumbleweed
+  is_tumbleweed && UGLY_NETWORK_FIX="cp /etc/sysconfig/network/ifcfg-ens4 /etc/sysconfig/network/ifcfg-ens3"
+ 
+  echo  "Preparing $IMAGE"
+  # Prepare image using guestfish, disable grub timeout, remove resume, disable firewall, adjust network
+  if ! guestfish -a "$TMP_DIR/$IMAGE" --rw <<EOF
+run
+mount /dev/sda2 /
+download /boot/grub2/grub.cfg $TMP_DIR/grub.cfg
+download /etc/default/grub $TMP_DIR/grub
+! sed -e 's/set timeout=-1/set timeout=10/g' -e 's/resume=*[^ ]*//g' $TMP_DIR/grub.cfg > $TMP_DIR/grub.cfg.done
+! sed -e 's/GRUB_TIMEOUT=-1/GRUB_TIMEOUT=10/g' -e 's/resume=*[^ ]*//g' $TMP_DIR/grub > $TMP_DIR/grub.done
+upload $TMP_DIR/grub.cfg.done /boot/grub2/grub.cfg
+upload $TMP_DIR/grub.done /etc/default/grub
+rm-f /etc/systemd/system/multi-user.target.wants/SuSEfirewall2.service
+rm-f /etc/systemd/system/multi-user.target.wants/SuSEfirewall2_init.service
+rm-f /etc/systemd/system/multi-user.target.wants/firewalld.service
+rm-f /etc/udev/rules.d/70-persistent-net.rules
+$UGLY_NETWORK_FIX
+exit
+EOF
+  then
+    echo "Error during guestfish preparation of image $IMAGE." >&2
+    exit 1
+  fi
+  prepared_msg
+  # Set prepared status
+  touch "$STATUS_DIR/prepared"
+}
+# Display job information
+job_info () {
+    echo "openqa2vm job details:"
+    echo "==================="
+    printf "%-20s %s\\n" "Job" "$JOB_ID"
+    printf "%-20s %s\\n" "Host" "$FROM"
+    printf "%-20s %s\\n" "Image" "$IMAGE"
+    printf "%-20s %s\\n" "Directory" "$TMP_DIR"
+    printf "%-20s %s\\n" "Libvirt host" "$LIBVIRT_HOST"
+    printf "%-20s %s\\n" "Memory" "$MEMORY"
+    printf "%-20s %s\\n" "Vcpu" "$VCPU"
+    printf "%-20s %s\\n" "Nodes" "$NODES"
+    printf "%-20s %s\\n" "Downloaded" "$([ -f "$STATUS_DIR/downloaded" ]; yes_no)" 
+    printf "%-20s %s\\n" "Prepared" "$([ -f "$STATUS_DIR/prepared" ]; yes_no)"
+    printf "%-20s %s\\n" "Installed" "$([ -f "$STATUS_DIR/local" ]; yes_no)"
+    printf "%-20s %s\\n" "Installed remote" "$([ -f "$STATUS_DIR/remote/$LIBVIRT_HOST" ]; yes_no)"
+    echo 
+    echo "Job variables:"
+    echo "=============="
+    for var in $1; do
+      printf "%-20s %s\\n" "$var" "$(get_var "$var")"
+    done
+}
+
+setup () {
+  # Validate that JOB_ID is integer
+  is_job_id "$JOB_ID"
+  # Validate FROM, that it is valid ip address or hostname
+  { is_ip $FROM || is_host $FROM; } || { echo "Invalid hostname provided: $FROM is not ip address or valid FQDN" >&2 && exit 1; }
+
+  # Construct tmp directory variables
+  TMP_DIR=$SYS_TMP/openqa2vm/$FROM/$JOB_ID
+  VARS=$TMP_DIR/vars.json
+  STATUS_DIR=$TMP_DIR/status
+
+  # Download vars.json from openQA server
+  if [ ! -f "$VARS" ]; then
+    wget -P "$SYS_TMP/openqa2vm" -c "$FROM/tests/$JOB_ID/file/vars.json" || { echo "Error during download of vars.json for job $JOB_ID from $FROM" >&2 && exit 1; }
+    mkdir -p "$TMP_DIR"
+    mkdir -p "$STATUS_DIR"
+    mkdir -p "$STATUS_DIR/remote"
+    mv "$SYS_TMP/openqa2vm/vars.json" "$VARS"
+  fi
+
+  # Set IMAGE variable, if PUBLISH_HDD_1 is not available, use HDD_1
+  IMAGE=$(get_var "$IMAGE_VAR")
+  if [ "$IMAGE" = "" ]; then
+    IMAGE=$(get_var HDD_1 | sed -e 's/.*\///g')
+    [ "$IMAGE" = "" ] &&  { echo "Job $JOB_ID on $FROM has no image for download" >&2 && exit 1; } 
+  fi
+}
+
+create_tf_config () {
+  DISTRI=$(get_var "DISTRI")
+  VERSION=$(get_var "VERSION")
+  NETWORK="network_name= \"default\""
+  LIBVIRT_URI="qemu:///system"
+
+  # Use bridge network if defined
+  [ -n "$BRIDGE" ] && NETWORK="bridge= \"$BRIDGE\""
+
+  # Use macvtap network 
+  [ -n "$MACVTAP" ] && NETWORK="macvtap= \"$MACVTAP\""
+
+  # Use remote libvirt
+  [ -n "$LIBVIRT_HOST" ] && LIBVIRT_URI="qemu+ssh://root@$LIBVIRT_HOST/system"
+
+  cat << EOF > $TMP_DIR/openqa2vm.tf
+provider "libvirt" {
+  uri = "$LIBVIRT_URI"
+}
+
+variable "count" {
+    default = "$NODES"
+}
+
+resource "libvirt_volume" "volume" {
+  name = "$FROM-$DISTRI-$VERSION-$JOB_ID-\${count.index}"
+  pool = "$LIBVIRT_VOLUME_POOL"
+  base_volume_id = "$LIBVIRT_IMAGE_DIR/$IMAGE"
+  format = "qcow2"
+  count = "\${var.count}"
+}
+
+resource "libvirt_domain" "openqa2vm" {
+  name = "$FROM-$DISTRI-$VERSION-$JOB_ID-\${count.index}"
+  count = "\${var.count}"
+  memory = $MEMORY
+  vcpu = $VCPU
+
+  qemu_agent = true
+network_interface {
+    $NETWORK
+    wait_for_lease = true
+}
+
+  disk {
+    volume_id = "\${element(libvirt_volume.volume.*.id, count.index)}"
+  }
+}
+
+output "ips" {
+  value = "\${libvirt_domain.openqa2vm.*.network_interface.0.addresses}"
+}
+EOF
+}
+
+run_vm () {
+  [ -f "/usr/bin/terraform" ] || { echo "Missing terraform. Please install terraform and terraform-provider-libvirt." >&2 && exit 1; }
+  install_image
+  create_tf_config
+  pushd  "$TMP_DIR"
+  terraform init
+  terraform apply -auto-approve
+  popd 
+}
+
+destroy_vm () {
+  pushd "$TMP_DIR"
+  terraform destroy -auto-approve
+  popd
+}
+
+cleanup () {
+  [ -n "$LIBVIRT_HOST" ] && RCMD="ssh root@$LIBVIRT_HOST"
+  $RCMD rm "$LIBVIRT_IMAGE_DIR/$IMAGE"
+  rm -rf "$TMP_DIR"
+  echo "Image $IMAGE and openqa2vm job directory $TMP_DIR were deleted"
+}
+
+while getopts "hf:b:i:d:p:r:c:x:s:" opt; do
+  case "$opt" in
+    f)
+      FROM=$OPTARG
+      ;;
+    s)
+      JOB_ID=$OPTARG
+      setup
+      job_info "TEST DISTRI ARCH VERSION PUBLISH_HDD_1 HDD_1"
+      exit 0
+      ;;
+    d)
+      JOB_ID=$OPTARG
+      setup
+      download_image
+      exit 0
+      ;;
+    b)
+      BRIDGE=$OPTARG
+      ;;
+    p)
+      JOB_ID=$OPTARG
+      setup
+      download_image
+      prepare_image
+      exit 0
+      ;;
+    i)
+      JOB_ID=$OPTARG
+      setup
+      download_image
+      prepare_image
+      install_image
+      exit 0
+      ;;
+    r)
+      JOB_ID=$OPTARG
+      setup
+      download_image
+      prepare_image
+      install_image
+      run_vm
+      exit 0
+      ;;
+    x)
+      JOB_ID=$OPTARG
+      setup
+      destroy_vm
+      exit 0
+      ;;
+    c) 
+      JOB_ID=$OPTARG
+      setup
+      destroy_vm
+      cleanup
+      exit 0
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument" >&2
+      usage
+      ;;
+    h|*)
+      usage
+      ;;
+  esac
+done
+usage
