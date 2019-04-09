@@ -67,13 +67,13 @@ sudo zypper ar https://download.opensuse.org/repositories/systemsmanagement:/ter
 ##### openSUSE Leap 15.0
 
 ```bash
-sudo https://download.opensuse.org/repositories/systemsmanagement:/terraform/openSUSE_Leap_15.0/systemsmanagement:terraform.repo
+sudo zypper ar https://download.opensuse.org/repositories/systemsmanagement:/terraform/openSUSE_Leap_15.0/systemsmanagement:terraform.repo
 ```
 
 #### Install terrafrom and terraform-provider-libvirt
 
 ``` bash
-sudo zypper in terrafrom terraform-provider-libvirt
+sudo zypper in terraform terraform-provider-libvirt
 ```
 
 ## Installation

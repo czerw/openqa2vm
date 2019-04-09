@@ -46,31 +46,31 @@ function usage {
 Usage: $(basename "$0") [OPTIONS] JOBID
 
 Options:
-  -f HOST     get job from specified host (default openqa.opensuse.org) 
-  -b BRIDGE   enable bridge networking on BRIDGE
-  -s JOBID    show information about job
-  -d JOBID    download image for the job
-  -p JOBID    prepare image for virtual machine
-  -i JOBID    install image to libvirt directory
-  -r JOBID    run virtual machine
-  -x JOBID    destroy(stop and delete) virtual machine
-  -c JOBID    openqa2vm cleanup 
-              stop vm, delete vm, delete images, delete tmp files
-  -h          display help
+  -f HOST   get job from specified host (default openqa.opensuse.org) 
+  -b BRIDGE enable bridge networking on BRIDGE
+  -s JOBID  show information about job
+  -d JOBID  download image for the job
+  -p JOBID  prepare image for virtual machine
+  -i JOBID  install image to libvirt directory
+  -r JOBID  run virtual machine
+  -x JOBID  destroy(stop and delete) virtual machine
+  -c JOBID  openqa2vm cleanup 
+            stop vm, delete vm, delete images, delete tmp files
+  -h        display help
 
 Examples:
-openqa2vm  -s 895435 # display job info from o.o.o
-openqa2vm  -s 895435 # dowload image  from o.o.o
-openqa2vm  -p 895435 # prepare image  from o.o.o
-openqa2vm  -r 895435 # download, prepare amd run vm
-openqa2vm  -b br0 -r 895435 # download, prepare amd run vm with network attached to bridge br0
+openqa2vm -s 895435 # display job info from o.o.o
+openqa2vm -s 895435 # dowload image  from o.o.o
+openqa2vm -p 895435 # prepare image  from o.o.o
+openqa2vm -r 895435 # download, prepare, install image and run vm
+openqa2vm -b br0 -r 895435 # download, prepare, install image and run vm with network attached to bridge br0
 
-openqa2vm  -s 2758750 # display job info from o.s.d
+openqa2vm -f openqa.suse.de -s 2758750 # display job info from o.s.d
 
 Recommended workflow:
-openqa2vm  -s 895435 # show info
-openqa2vm  -r 895435 # run vm
-openqa2vm  -c 895435 # clean all
+openqa2vm -s 895435 # show info
+openqa2vm -r 895435 # run vm
+openqa2vm -c 895435 # clean all
 
 Notes:
 root privileges are needed
