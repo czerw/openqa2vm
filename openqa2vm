@@ -103,6 +103,15 @@ is_host () {
 is_tumbleweed () {
   [ "$(get_var "VERSION")" = "Tumbleweed" ]
 }
+
+is_sle () {
+  [ "$(get_var "DISTRI")" = "sle" ]
+}
+
+is_sle12 () {
+  is_sle && [[ $(get_var "VERSION") =~ ^12.* ]]
+}
+
 # Return content of variable from vars.json
 get_var () {
   grep "\"$1\"" "$VARS" | awk  '{print $3}'| sed -e 's/"//g' -e 's/,//g';
@@ -157,12 +166,15 @@ prepare_image () {
   # Get ssh key, if exists
   [ -f "$SSH_KEY_FILE" ] && SSH_KEY=$(cat "$SSH_KEY_FILE")
 
+  # Don't mount root subvolume on SLE12
+  is_sle12 || MOUNT_ROOT="mount btrfsvol:/dev/sda2/@/root /root"
+
   echo  "Preparing $IMAGE"
   # Prepare image using guestfish, disable grub timeout, remove resume, disable firewall, adjust network
   if ! guestfish -a "$TMP_DIR/$IMAGE" --rw <<EOF
 run
 mount /dev/sda2 /
-mount btrfsvol:/dev/sda2/@/root /root
+$MOUNT_ROOT
 download /boot/grub2/grub.cfg $TMP_DIR/grub.cfg
 download /etc/default/grub $TMP_DIR/grub
 ! sed -e 's/set timeout=-1/set timeout=10/g' -e 's/resume=*[^ ]*//g' $TMP_DIR/grub.cfg > $TMP_DIR/grub.cfg.done
