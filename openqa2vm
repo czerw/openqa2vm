@@ -37,6 +37,10 @@ VCPU=${VCPU:=1}
 BRIDGE=${BRIDGE}
 MACVTAP=${MACVTAP}
 
+# SSH key configuration for image 
+SSH_KEY_USER=${SSH_KEY_USER:=$(logname)}
+SSH_KEY_FILE=${SSH_KEY_FILE:=$(eval echo "~$SSH_KEY_USER/.ssh/id_rsa.pub")}
+
 function usage {
 	cat <<EOF
 Usage: $(basename "$0") [OPTIONS] JOBID
@@ -150,12 +154,15 @@ prepare_image () {
   download_image
   # Fix network configuration in Tumbleweed
   is_tumbleweed && UGLY_NETWORK_FIX="cp /etc/sysconfig/network/ifcfg-ens4 /etc/sysconfig/network/ifcfg-ens3"
- 
+  # Get ssh key, if exists
+  [ -f "$SSH_KEY_FILE" ] && SSH_KEY=$(cat "$SSH_KEY_FILE")
+
   echo  "Preparing $IMAGE"
   # Prepare image using guestfish, disable grub timeout, remove resume, disable firewall, adjust network
   if ! guestfish -a "$TMP_DIR/$IMAGE" --rw <<EOF
 run
 mount /dev/sda2 /
+mount btrfsvol:/dev/sda2/@/root /root
 download /boot/grub2/grub.cfg $TMP_DIR/grub.cfg
 download /etc/default/grub $TMP_DIR/grub
 ! sed -e 's/set timeout=-1/set timeout=10/g' -e 's/resume=*[^ ]*//g' $TMP_DIR/grub.cfg > $TMP_DIR/grub.cfg.done
@@ -167,6 +174,10 @@ rm-f /etc/systemd/system/multi-user.target.wants/SuSEfirewall2_init.service
 rm-f /etc/systemd/system/multi-user.target.wants/firewalld.service
 rm-f /etc/udev/rules.d/70-persistent-net.rules
 $UGLY_NETWORK_FIX
+mkdir-p /root/.ssh
+write-append /root/.ssh/authorized_keys "$SSH_KEY"
+chmod 0700 /root/.ssh
+chmod 0600 /root/.ssh/authorized_keys
 exit
 EOF
   then
