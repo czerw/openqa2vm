@@ -41,7 +41,7 @@ virtual machines.
 Information about ip address provided, when is virtual machine successfully started. Connection to cloned machine can be done using ssh as root. Keys for ssh are automatically injected from
 logged user who runs openqa2vm script.
 
-Default openQA instance is `openqa.opensuse.org`, but it can be changed by `-f` option or environment variable `FROM` to any openQA instance like openqa.opensuse.org or even private instance.
+Default openQA instance is `openqa.opensuse.org`, but it can be changed by `-f` option or environment variable `FROM` to any openQA instance like `openqa.suse.de` or even private instance.
  
 Local libvirt `qemu:///system` is used as default with natted network. Type of the network can be changed to bridge by `-b` option or `BRIDGE` variable with supplied name of the
 bridge interface. If you want to set macvtap interface, use environment variable `MACVTAP` with network device.
@@ -58,7 +58,7 @@ Default values of variables:
 * `CFG_FILE` /etc/openqa2vm/default
 * `FROM` openqa.suse.de
 * `SSH_KEY_USER` currently logged user who runs openqa2vm script
-* `SSH_KEY_USER` created from `SSH_KEY_USER`
+* `SSH_KEY_FILE` created from `SSH_KEY_USER`
 * `LIBVIRT_HOST` not set
 * `LIBVIRT_IMAGE_DIR` /var/lib/libvirt/images
 * `LIBVIRT_VOLUME_POOL` default
