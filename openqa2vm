@@ -60,7 +60,7 @@ Options:
 
 Examples:
 openqa2vm -s 895435 # display job info from o.o.o
-openqa2vm -s 895435 # dowload image  from o.o.o
+openqa2vm -d 895435 # dowload image  from o.o.o
 openqa2vm -p 895435 # prepare image  from o.o.o
 openqa2vm -r 895435 # download, prepare, install image and run vm
 openqa2vm -b br0 -r 895435 # download, prepare, install image and run vm with network attached to bridge br0
