@@ -272,7 +272,7 @@ provider "libvirt" {
   uri = "$LIBVIRT_URI"
 }
 
-variable "count" {
+variable "node_count" {
     default = "$NODES"
 }
 
@@ -281,12 +281,12 @@ resource "libvirt_volume" "volume" {
   pool = "$LIBVIRT_VOLUME_POOL"
   base_volume_id = "$LIBVIRT_IMAGE_DIR/$IMAGE"
   format = "qcow2"
-  count = "\${var.count}"
+  count = "\${var.node_count}"
 }
 
 resource "libvirt_domain" "openqa2vm" {
   name = "$FROM-$DISTRI-$VERSION-$JOB_ID-\${count.index}"
-  count = "\${var.count}"
+  count = "\${var.node_count}"
   memory = $MEMORY
   vcpu = $VCPU
 
